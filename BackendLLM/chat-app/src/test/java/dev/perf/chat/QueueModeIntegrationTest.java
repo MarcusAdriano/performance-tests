@@ -22,8 +22,15 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
-/** api + worker in one context: same code paths as the two containers, one JVM. */
-@SpringBootTest(properties = "app.mode=worker")
+/**
+ * api + worker in one context: same code paths as the two containers, one JVM.
+ * <p>
+ * application-api.yml excludes the Spring AI stack because a real api process never uses
+ * it; in this merged context the worker half needs it, so the test clears that profile's
+ * exclude list (the Data Redis excludes live on {@code ChatApplication} and still apply).
+ * The api-only wiring is covered by {@link ApiModeStartupTest}.
+ */
+@SpringBootTest(properties = { "app.mode=worker", "spring.autoconfigure.exclude=" })
 @AutoConfigureMockMvc
 @ActiveProfiles({ "api", "worker" })
 class QueueModeIntegrationTest {

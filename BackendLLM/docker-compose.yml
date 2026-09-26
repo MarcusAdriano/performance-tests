@@ -92,9 +92,9 @@ services:
     ports: ["8080:8080"]
     cpus: ${API_CPUS}
     mem_limit: ${API_MEM}
+    # The api never talks to Redis or the LLM (see application-api.yml).
     depends_on:
       postgres: { condition: service_healthy }
-      redis: { condition: service_healthy }
       rabbitmq: { condition: service_healthy }
 
   chat-worker:

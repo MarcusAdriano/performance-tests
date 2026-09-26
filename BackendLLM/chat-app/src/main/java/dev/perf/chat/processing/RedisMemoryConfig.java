@@ -7,8 +7,11 @@ import org.springframework.ai.model.chat.memory.repository.redis.autoconfigure.R
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.context.annotation.Profile;
 
+/** Only the modes that run the LLM loop use chat memory (api excludes it entirely). */
 @Configuration(proxyBeanMethods = false)
+@Profile({ "sync", "worker" })
 public class RedisMemoryConfig {
 
 	/**
