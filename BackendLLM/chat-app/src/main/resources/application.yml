@@ -64,6 +64,14 @@ spring:
             key-prefix: "chat-memory:"
             time-to-live: 1h
             initialize-schema: true
+            # Without an explicit list the repository indexes "$.metadata.*" as TEXT.
+            # OpenAiChatModel puts non-string metadata on every assistant message
+            # (index: number, annotations: array), RediSearch then fails to index that
+            # document and FT.SEARCH never returns it: the assistant replies silently
+            # vanish from memory. Declaring typed fields drops the wildcard.
+            metadata-fields:
+              - name: messageType
+                type: tag
 
 server:
   shutdown: graceful
