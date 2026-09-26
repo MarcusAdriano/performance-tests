@@ -95,7 +95,7 @@ BackendLLM/
 | Serviço | Profile | Recursos (padrão) | Porta host |
 |---|---|---|---|
 | `postgres` (17) | sempre | livre | 5432 |
-| `redis` (`redis:8`, inclui RedisJSON + Query Engine) | sempre | livre | 6379 |
+| `redis` (`redis:8.6`, inclui RedisJSON + Query Engine) | sempre | livre | 6379 |
 | `redis-exporter` | sempre | livre | 9121 |
 | `llm-mock` | sempre | livre | 9000 |
 | `prometheus` | sempre | livre | 9090 |
@@ -144,7 +144,9 @@ Geração de argumentos pelo schema: `string` → trecho da última mensagem do 
 
 ## 7. chat-app (Spring Boot)
 
-**Stack:** Java 25, Spring Boot 4, Spring AI 2.0.x (`spring-ai-starter-model-openai` apontando para o mock, `spring-ai-starter-model-chat-memory-repository-redis`), Spring Data JPA + Flyway, Spring AMQP, Actuator + Micrometer Prometheus.
+**Stack:** Java 25, Spring Boot 4.1.1, Spring AI 2.0.1 (`spring-ai-starter-model-openai` apontando para o mock — usa o SDK oficial `openai-java`/OkHttp; `spring-ai-starter-model-chat-memory-repository-redis`), `JdbcClient` (spring-boot-starter-jdbc) + Flyway, Spring AMQP, Actuator + Micrometer Prometheus.
+
+> Persistência com `JdbcClient` em vez de JPA: cada update é um SQL explícito com auto-commit, o que torna visível (e garantido) que nenhuma conexão fica presa durante as chamadas ao LLM, e evita queries ocultas que distorceriam as medições.
 
 ### 7.1 Modos (`APP_MODE` → Spring profile)
 
@@ -216,12 +218,13 @@ Uma `@Tool` Java local, rápida e determinística — `consultarPrevisaoTempo(ci
 - Propriedades: `spring.ai.chat.memory.repository.redis.host/port`, `key-prefix=chat-memory:`, `time-to-live=1h`, `initialize-schema=true`.
 - Expirado o TTL, o contexto de curto prazo se perde; o histórico permanece no Postgres. Não há reidratação do Redis a partir do Postgres.
 - Como o repositório usa Jedis próprio, o tráfego Redis não aparece nas métricas Lettuce do Micrometer; o `redis-exporter` cobre esse lado.
+- O starter cria um `RedisClient` com o pool padrão do Jedis (**8 conexões**), com `@ConditionalOnMissingBean`. A app declara o próprio `RedisClient` com `REDIS_POOL_MAX` (padrão 8, igual ao do Jedis) para que esse gargalo possa ser observado e ajustado.
 
 ### 7.7 Cliente LLM
 
-- `spring.ai.openai.base-url=http://llm-mock:9000`, api-key fictícia.
-- Read timeout 30s.
-- Retry do Spring AI **desligado por padrão** (`spring.ai.retry.max-attempts=1`), configurável por env.
+- `spring.ai.openai.base-url=http://llm-mock:9000/v1` (o Spring AI usa a URL como está; o mock atende com e sem `/v1`), api-key fictícia.
+- `spring.ai.openai.timeout=30s`.
+- Retry **desligado por padrão** nas duas camadas: `spring.ai.retry.max-attempts=1` (Spring AI) e `spring.ai.openai.max-retries=0` (SDK openai-java). Configurável por env.
 
 ## 8. Modo fila (RabbitMQ)
 
@@ -231,7 +234,7 @@ Uma `@Tool` Java local, rápida e determinística — `consultarPrevisaoTempo(ci
 - `chat.turns.process` tem dead-letter para a fila `chat.turns.dlq`.
 - Sem `x-max-length` (backlog ilimitado, para observar crescimento).
 
-**API (`api`):** `INSERT PENDING` (commit) → publica `{turnId}` → `202`. Falha no publish → turno `FAILED` e resposta `503`. Sem outbox; a janela entre commit e publish é limitação conhecida.
+**API (`api`):** `INSERT PENDING` (commit) → publica o `turnId` (corpo texto, UUID) → `202`. Falha no publish → turno `FAILED` e resposta `503`. Sem outbox; a janela entre commit e publish é limitação conhecida.
 
 **Worker (`worker`):**
 
@@ -256,7 +259,7 @@ Uma `@Tool` Java local, rápida e determinística — `consultarPrevisaoTempo(ci
 **Métricas da app:**
 
 - Nativas: `http_server_requests`, `hikaricp_connections_*`, JVM (heap, GC, threads), observações do Spring AI (chamadas `gen_ai`, tool calls, tokens).
-- Customizadas: `chat_turn_processing_seconds{mode,outcome}`, `chat_turn_queue_wait_seconds` (worker), `chat_turns_total{mode,outcome}`.
+- Customizadas: `chat_turn_processing_seconds{mode,outcome}`, `chat_turn_queue_wait_seconds{mode}`, `chat_turns_total{mode,outcome}`, `chat_turns_inflight{mode}` (gauge).
 
 **Dashboards Grafana** (provisionados, JSON versionado):
 
