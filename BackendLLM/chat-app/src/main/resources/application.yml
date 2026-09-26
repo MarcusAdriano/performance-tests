@@ -21,6 +21,15 @@ spring:
   mvc:
     problemdetails:
       enabled: true
+  # Spring Boot auto-configures a Lettuce connection factory (and its health indicator)
+  # from spring.data.redis.* whenever spring-boot-starter-data-redis is on the classpath
+  # (pulled in transitively by the Redis chat-memory repository). Point it at the same
+  # Redis instance as spring.ai.chat.memory.repository.redis.* below, or it defaults to
+  # localhost:6379 and the health check fails even though the app never uses that bean.
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
   rabbitmq:
     host: ${RABBIT_HOST:localhost}
     port: 5672

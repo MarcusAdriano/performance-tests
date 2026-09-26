@@ -1,0 +1,23 @@
+# 5s: spikes are short, a 15s scrape would hide them.
+global:
+  scrape_interval: 5s
+  evaluation_interval: 5s
+
+scrape_configs:
+  # Only the running variant is UP; the others show as DOWN, which is expected.
+  - job_name: chat-app
+    metrics_path: /actuator/prometheus
+    static_configs:
+      - targets: ["chat-sync:8080", "chat-api:8080", "chat-worker:8080"]
+  - job_name: llm-mock
+    static_configs:
+      - targets: ["llm-mock:9000"]
+  - job_name: rabbitmq
+    static_configs:
+      - targets: ["rabbitmq:15692"]
+  - job_name: redis
+    static_configs:
+      - targets: ["redis-exporter:9121"]
+  - job_name: cadvisor
+    static_configs:
+      - targets: ["cadvisor:8080"]
