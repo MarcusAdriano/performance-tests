@@ -94,10 +94,16 @@ docker compose --profile queue down
 | `REDIS_POOL_MAX` | `8` | Pool Jedis da memória de chat |
 | `LLM_MIN_DELAY_MS` / `LLM_MAX_DELAY_MS` | `2000` / `5000` | Latência de cada chamada ao LLM |
 | `LLM_ERROR_RATE` | `0.0` | Fração de chamadas LLM que falham (500/429) |
+| `LLM_TIMEOUT` | `30s` | Timeout de cada chamada do app ao LLM |
+| `LLM_RETRY_MAX_ATTEMPTS` | `1` | Tentativas por chamada ao LLM (1 = sem retry, para não mascarar erros) |
 
 **Regra do orçamento:** na variante `queue`, `API_* + WORKER_*` deve somar no máximo 1 CPU e 1 GB.
 
 Depois de mudar o `.env`: `docker compose --profile <variante> up -d` recria só o que mudou.
+
+O Redis não tem volume: `docker compose ... down` zera a memória de chat e o índice
+RediSearch (`chat-memory-idx`), que é criado no boot do `chat-sync`/`chat-worker` só se não
+existir. Depois de atualizar o app (mudança no schema do índice), rode `down` antes do `up`.
 
 ## API
 
@@ -120,10 +126,11 @@ MID=$(curl -s -X POST localhost:8080/conversations/$CID/messages \
   -H 'Content-Type: application/json' -d '{"content":"Recife"}' | tee /dev/tty | jq -r .messageId)
 
 # Polling até terminar (é o que o JMeter faz)
-until [ "$(curl -s localhost:8080/messages/$MID | jq -r .status)" = "DONE" ]; do printf .; sleep 1; done; echo
+while :; do S=$(curl -s localhost:8080/messages/$MID | jq -r .status); case $S in DONE|FAILED) break;; esac; printf .; sleep 1; done; echo " $S"
 curl -s localhost:8080/messages/$MID | jq
 
-# Histórico (a segunda mensagem mostra "mensagens no contexto" maior: memória no Redis)
+# Histórico: a resposta do turno N traz "mensagens no contexto: 2N+2" (4, 6, 8...; memória
+# no Redis, janela de 20 mensagens => estabiliza em 24 a partir do 11º turno)
 curl -s -X POST localhost:8080/conversations/$CID/messages -H 'Content-Type: application/json' -d '{"content":"Natal"}' > /dev/null
 curl -s localhost:8080/conversations/$CID/messages | jq
 ```

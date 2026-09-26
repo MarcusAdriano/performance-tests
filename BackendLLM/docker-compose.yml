@@ -17,6 +17,8 @@ x-chat-env: &chat-env
   REDIS_PORT: "6379"
   REDIS_POOL_MAX: ${REDIS_POOL_MAX}
   LLM_BASE_URL: http://llm-mock:9000/v1
+  LLM_TIMEOUT: ${LLM_TIMEOUT}
+  LLM_RETRY_MAX_ATTEMPTS: ${LLM_RETRY_MAX_ATTEMPTS}
   RABBIT_HOST: rabbitmq
 
 services:
