@@ -109,7 +109,7 @@ BackendLLM/
 - Uso: `docker compose --profile sync up` **ou** `docker compose --profile queue up`. Uma variante por vez; ambas expõem a API em `:8080`.
 - Limites vêm do `.env` (`SYNC_CPUS`, `SYNC_MEM`, `API_CPUS`, `API_MEM`, `WORKER_CPUS`, `WORKER_MEM`). Invariante: `API_* + WORKER_* ≤ 1 CPU / 1 GB`.
 - JVM com `-XX:MaxRAMPercentage=75` para respeitar o limite do container.
-- Healthchecks em todos os serviços; apps Java usam `depends_on: condition: service_healthy`.
+- Healthchecks em Postgres, Redis, RabbitMQ e llm-mock; as apps Java usam `depends_on: condition: service_healthy` neles.
 
 ## 6. llm-mock (Go)
 
