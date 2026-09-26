@@ -1,0 +1,78 @@
+# APP_MODE selects the role of this jar: sync | api | worker (mapped to Spring profiles).
+app:
+  mode: ${APP_MODE:sync}
+  redis:
+    pool-max: ${REDIS_POOL_MAX:8}
+
+spring:
+  application:
+    name: chat-app
+  profiles:
+    active: ${APP_MODE:sync}
+  threads:
+    virtual:
+      enabled: true
+  datasource:
+    url: ${DB_URL:jdbc:postgresql://localhost:5432/chat}
+    username: ${DB_USER:chat}
+    password: ${DB_PASSWORD:chat}
+    hikari:
+      maximum-pool-size: ${DB_POOL_SIZE:10}
+  mvc:
+    problemdetails:
+      enabled: true
+  rabbitmq:
+    host: ${RABBIT_HOST:localhost}
+    port: 5672
+    username: ${RABBIT_USER:guest}
+    password: ${RABBIT_PASSWORD:guest}
+    listener:
+      simple:
+        concurrency: ${WORKER_CONCURRENCY:50}
+        max-concurrency: ${WORKER_CONCURRENCY:50}
+        prefetch: 1
+        default-requeue-rejected: false
+  ai:
+    model:
+      chat: openai
+    openai:
+      base-url: ${LLM_BASE_URL:http://localhost:9000/v1}
+      api-key: mock-key
+      timeout: ${LLM_TIMEOUT:30s}
+      # Retries are off in both layers (openai-java SDK and Spring AI): silent retries distort measurements.
+      max-retries: 0
+      connection-pool-metrics-enabled: true
+      chat:
+        model: mock-model
+    retry:
+      max-attempts: ${LLM_RETRY_MAX_ATTEMPTS:1}
+    chat:
+      memory:
+        repository:
+          redis:
+            host: ${REDIS_HOST:localhost}
+            port: ${REDIS_PORT:6379}
+            key-prefix: "chat-memory:"
+            time-to-live: 1h
+            initialize-schema: true
+
+server:
+  shutdown: graceful
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics,prometheus
+  metrics:
+    tags:
+      application: chat-${APP_MODE:sync}
+    distribution:
+      percentiles-histogram:
+        http.server.requests: true
+        chat.turn.processing: true
+        chat.turn.queue.wait: true
+      maximum-expected-value:
+        http.server.requests: 60s
+        chat.turn.processing: 60s
+        chat.turn.queue.wait: 10m
