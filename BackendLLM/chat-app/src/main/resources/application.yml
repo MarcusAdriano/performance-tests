@@ -76,3 +76,9 @@ management:
         http.server.requests: 60s
         chat.turn.processing: 60s
         chat.turn.queue.wait: 10m
+      # Spring also creates a LongTaskTimer sharing the "http.server.requests" name for
+      # in-flight request tracking; its default minimum expected value (2m) is above our
+      # 60s maximum, which Micrometer rejects at meter-creation time. Pin it explicitly
+      # so the two merge cleanly.
+      minimum-expected-value:
+        http.server.requests: 1ms
