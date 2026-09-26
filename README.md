@@ -62,8 +62,6 @@ sequenceDiagram
 Pré-requisito: Docker. Uma variante por vez — as duas expõem a API em `:8080`.
 
 ```bash
-cd BackendLLM
-
 # Variante 1
 docker compose --profile sync up -d --build
 docker compose --profile sync down
