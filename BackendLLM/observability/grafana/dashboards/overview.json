@@ -1,0 +1,68 @@
+{
+  "uid": "backendllm-overview",
+  "title": "BackendLLM - Visão geral",
+  "tags": ["backendllm"],
+  "schemaVersion": 39,
+  "refresh": "5s",
+  "time": { "from": "now-15m", "to": "now" },
+  "panels": [
+    {
+      "id": 1, "type": "timeseries", "title": "Requisições/s por endpoint",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "reqps" }, "overrides": [] },
+      "targets": [
+        { "refId": "A", "expr": "sum by (application, method, uri) (rate(http_server_requests_seconds_count{uri!~\"/actuator.*\"}[30s]))", "legendFormat": "{{application}} {{method}} {{uri}}" }
+      ]
+    },
+    {
+      "id": 2, "type": "timeseries", "title": "Latência do POST de mensagem (p50 / p95 / p99)",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "s" }, "overrides": [] },
+      "targets": [
+        { "refId": "A", "expr": "histogram_quantile(0.50, sum by (le, application) (rate(http_server_requests_seconds_bucket{uri=\"/conversations/{conversationId}/messages\", method=\"POST\"}[30s])))", "legendFormat": "p50 {{application}}" },
+        { "refId": "B", "expr": "histogram_quantile(0.95, sum by (le, application) (rate(http_server_requests_seconds_bucket{uri=\"/conversations/{conversationId}/messages\", method=\"POST\"}[30s])))", "legendFormat": "p95 {{application}}" },
+        { "refId": "C", "expr": "histogram_quantile(0.99, sum by (le, application) (rate(http_server_requests_seconds_bucket{uri=\"/conversations/{conversationId}/messages\", method=\"POST\"}[30s])))", "legendFormat": "p99 {{application}}" }
+      ]
+    },
+    {
+      "id": 3, "type": "timeseries", "title": "Respostas HTTP de erro/s",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "reqps" }, "overrides": [] },
+      "targets": [
+        { "refId": "A", "expr": "sum by (application, status) (rate(http_server_requests_seconds_count{uri!~\"/actuator.*\", status=~\"4..|5..\"}[30s]))", "legendFormat": "{{application}} {{status}}" }
+      ]
+    },
+    {
+      "id": 4, "type": "timeseries", "title": "Turnos concluídos/s por resultado",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "ops" }, "overrides": [] },
+      "targets": [
+        { "refId": "A", "expr": "sum by (mode, outcome) (rate(chat_turns_total[30s]))", "legendFormat": "{{mode}} {{outcome}}" }
+      ]
+    },
+    {
+      "id": 5, "type": "timeseries", "title": "Duração do processamento do turno (p50 / p95)",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 16 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "s" }, "overrides": [] },
+      "targets": [
+        { "refId": "A", "expr": "histogram_quantile(0.50, sum by (le, mode) (rate(chat_turn_processing_seconds_bucket[30s])))", "legendFormat": "p50 {{mode}}" },
+        { "refId": "B", "expr": "histogram_quantile(0.95, sum by (le, mode) (rate(chat_turn_processing_seconds_bucket[30s])))", "legendFormat": "p95 {{mode}}" }
+      ]
+    },
+    {
+      "id": 6, "type": "timeseries", "title": "Trabalho em andamento",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 16 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
+      "targets": [
+        { "refId": "A", "expr": "sum by (mode) (chat_turns_inflight)", "legendFormat": "turnos em andamento ({{mode}})" },
+        { "refId": "B", "expr": "sum(llm_mock_inflight_requests)", "legendFormat": "chamadas LLM em andamento" }
+      ]
+    }
+  ]
+}

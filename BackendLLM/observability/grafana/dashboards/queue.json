@@ -1,0 +1,71 @@
+{
+  "uid": "backendllm-queue",
+  "title": "BackendLLM - Fila",
+  "tags": ["backendllm"],
+  "schemaVersion": 39,
+  "refresh": "5s",
+  "time": { "from": "now-15m", "to": "now" },
+  "panels": [
+    {
+      "id": 1, "type": "timeseries", "title": "Mensagens na fila",
+      "description": "prontas = backlog esperando consumidor; unacked = em processamento no worker.",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
+      "targets": [
+        { "refId": "A", "expr": "sum by (queue) (rabbitmq_queue_messages_ready{queue=~\"chat.turns.*\"})", "legendFormat": "{{queue}} prontas" },
+        { "refId": "B", "expr": "sum by (queue) (rabbitmq_queue_messages_unacked{queue=~\"chat.turns.*\"})", "legendFormat": "{{queue}} unacked" }
+      ]
+    },
+    {
+      "id": 2, "type": "timeseries", "title": "Taxas do RabbitMQ (msg/s)",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "ops" }, "overrides": [] },
+      "targets": [
+        { "refId": "A", "expr": "sum(rate(rabbitmq_global_messages_received_total[30s]))", "legendFormat": "publicadas" },
+        { "refId": "B", "expr": "sum(rate(rabbitmq_global_messages_delivered_total[30s]))", "legendFormat": "entregues" },
+        { "refId": "C", "expr": "sum(rate(rabbitmq_global_messages_acknowledged_total[30s]))", "legendFormat": "confirmadas (ack)" }
+      ]
+    },
+    {
+      "id": 3, "type": "timeseries", "title": "Tempo de espera na fila (p50 / p95)",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "s" }, "overrides": [] },
+      "targets": [
+        { "refId": "A", "expr": "histogram_quantile(0.50, sum by (le) (rate(chat_turn_queue_wait_seconds_bucket{mode=\"worker\"}[30s])))", "legendFormat": "p50" },
+        { "refId": "B", "expr": "histogram_quantile(0.95, sum by (le) (rate(chat_turn_queue_wait_seconds_bucket{mode=\"worker\"}[30s])))", "legendFormat": "p95" }
+      ]
+    },
+    {
+      "id": 4, "type": "timeseries", "title": "Turnos em andamento no worker",
+      "description": "Teto = WORKER_CONCURRENCY.",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
+      "targets": [
+        { "refId": "A", "expr": "sum(chat_turns_inflight{mode=\"worker\"})", "legendFormat": "em andamento" }
+      ]
+    },
+    {
+      "id": 5, "type": "stat", "title": "Consumidores",
+      "gridPos": { "h": 5, "w": 12, "x": 0, "y": 16 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
+      "targets": [
+        { "refId": "A", "expr": "sum(rabbitmq_queue_consumers{queue=\"chat.turns.process\"})", "legendFormat": "consumidores" }
+      ]
+    },
+    {
+      "id": 6, "type": "stat", "title": "Mensagens na DLQ",
+      "description": "Erros de infraestrutura no worker. Deve ficar em zero.",
+      "gridPos": { "h": 5, "w": 12, "x": 12, "y": 16 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
+      "targets": [
+        { "refId": "A", "expr": "sum(rabbitmq_queue_messages{queue=\"chat.turns.dlq\"})", "legendFormat": "DLQ" }
+      ]
+    }
+  ]
+}

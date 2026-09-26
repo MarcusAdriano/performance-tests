@@ -1,0 +1,90 @@
+{
+  "uid": "backendllm-resources",
+  "title": "BackendLLM - Recursos",
+  "tags": ["backendllm"],
+  "schemaVersion": 39,
+  "refresh": "5s",
+  "time": { "from": "now-15m", "to": "now" },
+  "panels": [
+    {
+      "id": 1, "type": "timeseries", "title": "CPU por container (cores)",
+      "description": "Teto: 1 core (sync) ou 0.4 + 0.6 (queue).",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
+      "targets": [
+        { "refId": "A", "expr": "sum by (name) (rate(container_cpu_usage_seconds_total{name=~\"chat-.*\"}[30s]))", "legendFormat": "{{name}}" }
+      ]
+    },
+    {
+      "id": 2, "type": "timeseries", "title": "CPU throttling (% dos períodos)",
+      "description": "Acima de zero = o container bateu no limite de CPU e foi pausado pelo kernel.",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "percentunit" }, "overrides": [] },
+      "targets": [
+        { "refId": "A", "expr": "sum by (name) (rate(container_cpu_cfs_throttled_periods_total{name=~\"chat-.*\"}[30s])) / sum by (name) (rate(container_cpu_cfs_periods_total{name=~\"chat-.*\"}[30s]))", "legendFormat": "{{name}}" }
+      ]
+    },
+    {
+      "id": 3, "type": "timeseries", "title": "Memória do container vs limite",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "bytes" }, "overrides": [] },
+      "targets": [
+        { "refId": "A", "expr": "container_memory_working_set_bytes{name=~\"chat-.*\"}", "legendFormat": "{{name}} uso" },
+        { "refId": "B", "expr": "container_spec_memory_limit_bytes{name=~\"chat-.*\"}", "legendFormat": "{{name}} limite" }
+      ]
+    },
+    {
+      "id": 4, "type": "timeseries", "title": "Heap da JVM",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "bytes" }, "overrides": [] },
+      "targets": [
+        { "refId": "A", "expr": "sum by (application) (jvm_memory_used_bytes{area=\"heap\"})", "legendFormat": "{{application}} usado" },
+        { "refId": "B", "expr": "sum by (application) (jvm_memory_max_bytes{area=\"heap\"})", "legendFormat": "{{application}} máximo" }
+      ]
+    },
+    {
+      "id": 5, "type": "timeseries", "title": "Fração do tempo em pausa de GC",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 16 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "percentunit" }, "overrides": [] },
+      "targets": [
+        { "refId": "A", "expr": "sum by (application) (rate(jvm_gc_pause_seconds_sum[30s]))", "legendFormat": "{{application}}" }
+      ]
+    },
+    {
+      "id": 6, "type": "timeseries", "title": "Pool de conexões HikariCP",
+      "description": "pending > 0 = threads esperando conexão com o Postgres (DB_POOL_SIZE).",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 16 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
+      "targets": [
+        { "refId": "A", "expr": "sum by (application) (hikaricp_connections_active)", "legendFormat": "{{application}} ativas" },
+        { "refId": "B", "expr": "sum by (application) (hikaricp_connections_pending)", "legendFormat": "{{application}} esperando" },
+        { "refId": "C", "expr": "sum by (application) (hikaricp_connections_max)", "legendFormat": "{{application}} máximo" }
+      ]
+    },
+    {
+      "id": 7, "type": "timeseries", "title": "Redis: clientes conectados",
+      "description": "Limitado pelo pool Jedis de cada app (REDIS_POOL_MAX).",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 24 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
+      "targets": [
+        { "refId": "A", "expr": "redis_connected_clients", "legendFormat": "clientes" }
+      ]
+    },
+    {
+      "id": 8, "type": "timeseries", "title": "Redis: comandos/s",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 24 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "ops" }, "overrides": [] },
+      "targets": [
+        { "refId": "A", "expr": "rate(redis_commands_processed_total[30s])", "legendFormat": "comandos/s" }
+      ]
+    }
+  ]
+}
