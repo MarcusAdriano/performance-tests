@@ -4,6 +4,7 @@ import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
 
+import dev.perf.chat.queue.DispatchFailedException;
 import org.junit.jupiter.api.Test;
 
 import org.springframework.beans.factory.annotation.Autowired;
@@ -116,6 +117,18 @@ class ConversationControllerTest {
 			.andExpect(jsonPath("$.status").value("DONE"))
 			.andExpect(jsonPath("$.content").value("Recife"))
 			.andExpect(jsonPath("$.createdAt").value("2026-01-01T10:00:00Z"));
+	}
+
+	@Test
+	void returns503WhenQueueIsUnavailable() throws Exception {
+		when(this.service.sendMessage(any(), any()))
+			.thenThrow(new DispatchFailedException(new RuntimeException("connection refused")));
+
+		this.mvc
+			.perform(post("/conversations/{id}/messages", this.conversationId).contentType(MediaType.APPLICATION_JSON)
+				.content("{\"content\":\"Recife\"}"))
+			.andExpect(status().isServiceUnavailable())
+			.andExpect(content().contentTypeCompatibleWith(MediaType.APPLICATION_PROBLEM_JSON));
 	}
 
 	@Test
