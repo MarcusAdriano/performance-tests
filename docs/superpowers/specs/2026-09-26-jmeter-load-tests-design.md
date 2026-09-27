@@ -25,6 +25,8 @@ Se o cálculo em `awk` passar de ~50 linhas num único script, essa parte migra 
 ```
 loadtest/
 ├── Dockerfile                    # JMeter 5.6.3 sobre eclipse-temurin:21-jre
+├── .dockerignore                 # contexto de build = só o Dockerfile
+├── user.properties               # formato do .jtl (TAB) e saída forçada da JVM
 ├── plan.jmx                      # plano único, parametrizado por -J
 ├── data/cities.csv               # conteúdo das mensagens
 ├── tests/{smoke,stress,spike}.env
@@ -35,7 +37,7 @@ loadtest/
 │   ├── schedule.sh               # tests/*.env → string de schedule + janelas de fase
 │   ├── jtl.sh                    # filtros, percentis, janelas
 │   └── prom.sh                   # consultas PromQL
-├── test/                         # fixtures + test.sh
+├── test/                         # test.sh + um *_test.sh por componente
 ├── results/                      # gitignored
 └── README.md
 ```
@@ -63,16 +65,20 @@ Test Plan
         │   └── While status ∉ {DONE, FAILED} e decorrido < ${__P(turn_timeout_s,120)}s
         │       ├── pausa ${__P(poll_ms,500)}
         │       └── GET /messages/${messageId}      → extrai status
-        │   (verificação final: status == DONE; senão falha com mensagem FAILED | TIMEOUT)
+        │   └── JSR223 Sampler "turno-resultado": sucesso se status == DONE; senão falha com
+        │       mensagem FAILED | TIMEOUT | HTTP <código>
         └── pausa ${__P(think_ms,1000)}
 ```
 
 - Cada chegada do Open Model Thread Group executa uma iteração = uma conversa.
 - **Métrica principal: o sample pai `turno`** — do `POST` até o status final. Comparável entre variantes: no `sync` é praticamente o `POST`; na `queue` soma `POST` + espera na fila + processamento + polling.
 - Samples filhos (`POST mensagem`, `GET status`) ficam no `.jtl` para análise fina.
-- **Classificação de erro do `turno`** (em `responseMessage`): `FAILED` (turno terminou em FAILED), `TIMEOUT` (excedeu `turn_timeout_s`), `HTTP <código>` (qualquer resposta não 2xx ou erro de conexão). Em erro HTTP o turno é abortado e a conversa segue para o próximo turno.
+- O Transaction Controller roda **sem** "generate parent sample" e com "include timers": grava um sample `turno` (tempo de parede, incluindo pausas do polling) depois dos filhos. Sucesso do `turno` = todos os filhos com sucesso.
+- **Classificação de erro** na `responseMessage` do sample `turno-resultado` (a do `turno` é o texto fixo do Transaction Controller): `FAILED` (turno terminou em FAILED), `TIMEOUT` (excedeu `turn_timeout_s`), `HTTP <código>` (qualquer resposta não 2xx ou erro de conexão). Em erro HTTP o turno é encerrado e a conversa segue para o próximo turno.
+- Falha em `POST /conversations`: `conversationId` recebe um UUID inexistente, os 5 turnos recebem `404` e contam como erro `HTTP`. Toda chegada produz exatamente 5 samples `turno`.
 - Polling de 500ms introduz até 0,5s de erro de medição no `turno` da `queue` — aceito frente a turnos de 4–10s.
-- `.jtl` em CSV com cabeçalho e os campos padrão (`timeStamp` = início do sample, em ms).
+- `.jtl` em CSV **separado por TAB** (a mensagem do Transaction Controller contém vírgulas), com cabeçalho e os campos padrão (`timeStamp` = início do sample, em ms). Definido em `user.properties`, carregado com `-q`, que vale também para o relatório HTML.
+- `user.properties` também liga `jmeterengine.force.system.exit=true`: sem isso a JVM do JMeter fica ~60s viva depois do fim (threads do pool do Open Model).
 
 ## 5. Perfis de carga
 
@@ -87,25 +93,26 @@ Arquivos `tests/<teste>.env` são a **fonte única**: `lib/schedule.sh` gera a s
 - Stress: cada degrau = rampa de `RAMP_S` do degrau anterior (0 no primeiro) até o novo + patamar de `HOLD_S`.
 - Spike: base → rampa de `JUMP_S` até o pico → pico → rampa de `JUMP_S` de volta à base → cauda.
 - Pico de 4 conversas/s ≈ 3× a capacidade estimada da `queue` (≈ 50 / 7s ≈ 7 turnos/s ≈ 1,4 conversas/s), de propósito.
-- `TIME_SCALE` (env, padrão `1`) divide todas as durações. Serve para executar versões encurtadas durante a verificação da implementação.
-- A sintaxe exata do `schedule` (rampas, degraus) é validada contra o JMeter 5.6.3 na implementação; o contrato é o comportamento acima.
+- **Pausa de drenagem:** ao fim do schedule, o Open Model Thread Group **interrompe** as conversas em andamento (verificado no 5.6.3). Por isso toda string de schedule termina com `pause(DRAIN_S)`, `DRAIN_S = turn_timeout_s + 60` (180s por padrão), e a análise considera **só turnos iniciados antes do fim das chegadas** (`fim principal`): todos eles terminam (DONE, FAILED ou TIMEOUT) dentro da pausa. Turnos iniciados durante a pausa são ignorados. A pausa não é encurtada por `TIME_SCALE` e sempre dura o valor inteiro.
+- `TIME_SCALE` (env, padrão `1`) divide todas as durações do perfil (não a pausa de drenagem). Serve para executar versões encurtadas durante a verificação da implementação.
+- Sintaxe validada com o parser do JMeter 5.6.3: `rate(0/s) random_arrivals(30 s) rate(0.5/s) random_arrivals(180 s) rate(0.5/s) … pause(180 s)`; taxas iguais antes e depois de um `random_arrivals` = patamar, diferentes = rampa linear; decimais são aceitos.
 
 ## 6. SLOs (`slo.env`)
 
 | Teste | Critério | Fonte |
 |---|---|---|
-| smoke | 0 erros de `turno`; p95 do `turno` ≤ `SMOKE_P95_S=12`; nº de turnos concluídos = conversas × 5 | jtl |
-| stress | Sem aprovação/reprovação. Reporta a **capacidade sustentável**: maior degrau com p95 do `turno` ≤ `STRESS_P95_S=15` **e** erros < `STRESS_ERR_PCT=1` | jtl |
+| smoke | 0 erros de `turno`; p95 do `turno` ≤ `SMOKE_P95_S=12`; turnos medidos ≥ `SMOKE_MIN_TURNS=30` (esperados ≈ 60) | jtl |
+| stress | Sem aprovação/reprovação. Reporta a **capacidade sustentável**: a taxa do último degrau aprovado antes do primeiro reprovado (`nenhum` se o primeiro reprovar). Degrau aprovado = tem turnos, p95 do `turno` ≤ `STRESS_P95_S=15` **e** erros < `STRESS_ERR_PCT=1` | jtl |
 | spike | Erros < `SPIKE_ERR_PCT=1` no teste todo | jtl |
 | spike | **Recuperação** ≤ `SPIKE_RECOVERY_S=120` | jtl |
 | spike | **Drenagem** ≤ `SPIKE_DRAIN_S=180` | Prometheus |
 
 Definições precisas:
 
-- **t0** = menor `timeStamp` do `.jtl` do teste. Fases e degraus são janelas relativas a t0, derivadas de `tests/<teste>.env` (com `TIME_SCALE`).
+- **t0** = menor `timeStamp` do `.jtl` do teste. Todas as estatísticas usam turnos com início em [t0, t0 + fim principal). Fases e degraus são janelas relativas a t0, derivadas de `tests/<teste>.env` (com `TIME_SCALE`).
 - **Atribuição a degrau (stress):** um `turno` pertence ao degrau em cujo **patamar** o seu `timeStamp` (início) cai. Turnos iniciados em rampas não entram nas linhas por degrau (entram nos totais).
 - **Recuperação (spike):** janelas de 30s sobre os `turno` agrupados por instante de término (`timeStamp + elapsed`), avançando de 5s em 5s a partir do fim do pico. Tempo de recuperação = início da primeira janela a partir da qual **todas** as janelas seguintes até o fim do teste têm p95 ≤ `SPIKE_P95_S=15`, menos o instante de fim do pico. Se não recuperar, o SLO falha e o valor é reportado como `> TAIL_S`.
-- **Drenagem (spike):** métrica de trabalho pendente — `queue`: `sum(rabbitmq_queue_messages_ready{queue="chat.turns.process"})`; `sync`: `sum(chat_turns_inflight{mode="sync"})`. Linha de base = máximo da métrica nos 60s antes do início do pico. Tempo de drenagem = primeiro instante após o fim do pico em que a métrica fica ≤ linha de base, menos o fim do pico. Consulta via `query_range` com `step=5s`.
+- **Drenagem (spike):** métrica de trabalho pendente — `queue`: `sum(rabbitmq_queue_messages_ready{queue="chat.turns.process"})`; `sync`: `sum(chat_turns_inflight{mode="sync"})`. Início do pico = início da rampa de subida. Linha de base = máximo da métrica nos 60s antes do início do pico (0 se não houver pontos). Tempo de drenagem = primeiro instante após o fim do pico em que a métrica fica ≤ linha de base, menos o fim do pico. Consulta via `query_range` com `step=5s`. Sem nenhum ponto da métrica → `n/d` e o SLO **reprova** (não há como comprovar).
 
 `run.sh` sai com código ≠ 0 se qualquer SLO de smoke ou spike falhar em qualquer variante executada.
 
@@ -118,10 +125,11 @@ loadtest/run.sh <smoke|stress|spike> [sync|queue|both]    # padrão: both
 Para cada variante, em sequência:
 
 1. `docker compose --profile <v> down` e `docker compose --profile <v> up -d --build --wait`. Postgres e Redis não têm volume: cada execução parte de estado zerado.
-2. **Aquecimento:** o mesmo plano com `rate(0.2/s)` por 60s; resultados em `warmup/`, ignorados no resumo.
-3. `docker compose --profile loadtest run --rm jmeter -n -t /loadtest/plan.jmx -Jhost=<chat-sync|chat-api> -Jschedule=… -l …/results.jtl -e -o …/report -j …/jmeter.log`.
-4. Consulta o Prometheus (`lib/prom.sh`) na janela [t0 − 60s, fim + 60s] e grava `metrics.json`.
-5. `docker compose --profile <v> down`.
+2. Espera `GET :8080/actuator/health` responder `UP` (até 180s), já que as apps Java não têm healthcheck no compose.
+3. **Aquecimento:** o mesmo plano com `rate(0.2/s)` por `WARMUP_S` (60s) + `pause(30 s)`; resultados em `warmup/`, ignorados no resumo.
+4. `docker compose --profile <v> --profile loadtest run --rm --user <uid:gid> jmeter -n -t /loadtest/plan.jmx -q /loadtest/user.properties -Jhost=<chat-sync|chat-api> -Jschedule=… -l …/results.jtl -e -o …/report -j …/jmeter.log`.
+5. Espera 10s (um scrape a mais), consulta o Prometheus (`lib/prom.sh`) na janela [t0 − 60s, agora], acrescenta reinícios/OOM (`docker inspect`) e grava `metrics.json`.
+6. `docker compose --profile <v> down`.
 
 Depois das variantes: `summarize.sh <dir-da-execução>` gera `summary.md` e define o código de saída.
 
@@ -146,7 +154,7 @@ Colunas = variantes executadas. Seções:
 2. **Cliente (jtl):** `turno` p50/p95/p99/máx, taxa de erro com quebra por tipo (`FAILED`/`TIMEOUT`/`HTTP`), turnos concluídos/s; no stress, uma tabela por degrau (taxa alvo, turnos/s concluídos, p95, erros %).
 3. **Servidor (Prometheus, diagnóstico — fora dos SLOs exceto drenagem):**
    - pico de backlog `rabbitmq_queue_messages_ready` (`queue`) e de `chat_turns_inflight`;
-   - p95 da espera na fila (`chat_turn_queue_wait_seconds`, `queue`);
+   - p95 da espera na fila (`chat_turn_queue_wait_seconds{mode="worker"}` — a tag `mode` é o `APP_MODE` de quem processa, `sync` ou `worker`);
    - % de períodos de CPU com *throttling* por container (cAdvisor);
    - pico de `hikaricp_connections_pending`;
    - heap máximo usado vs máximo;
@@ -159,7 +167,7 @@ Colunas = variantes executadas. Seções:
 
 ## 10. Testes do ferramental
 
-- **Unitários (sem Docker), `loadtest/test/test.sh`:**
+- **Unitários (sem Docker), `loadtest/test/test.sh`** (roda `test/*_test.sh`):
   - `lib/schedule.sh`: strings de schedule e janelas de fase para os três perfis, com e sem `TIME_SCALE`.
   - `lib/jtl.sh`: percentis, filtro do `turno`, atribuição a degraus com exclusão de rampas, classificação de erros, janelas de recuperação — sobre `.jtl` sintéticos com resultado conhecido.
   - `summarize.sh`: com `.jtl` + `metrics.json` fixos, verifica o conteúdo do veredito e o código de saída (aprovado e reprovado).
@@ -170,6 +178,7 @@ Colunas = variantes executadas. Seções:
 
 - No Mac, JMeter e aplicação dividem a mesma VM do Docker Desktop; o JMeter é leve (centenas de threads no pico), mas compete por CPU com a infraestrutura.
 - Polling de 500ms adiciona até 0,5s ao `turno` da `queue`.
+- Cada execução termina com a pausa de drenagem inteira (180s), mesmo quando as conversas acabam antes.
 - Turnos órfãos em `PROCESSING` (sem reaper, ver spec anterior) aparecem como `TIMEOUT`.
 
 ## 12. Fora de escopo
