@@ -39,7 +39,8 @@ CURRENT=""
 # interrompido sem chance de fazer seu próprio --rm (e `compose down` não derruba containers
 # avulsos de `run`), então removemos qualquer um pendente explicitamente.
 cleanup() {
-	docker ps -q --filter label=com.docker.compose.service=jmeter --filter label=com.docker.compose.oneoff=True |
+	docker ps -q --filter label=com.docker.compose.project=backendllm \
+		--filter label=com.docker.compose.service=jmeter --filter label=com.docker.compose.oneoff=True 2>/dev/null |
 		xargs -r docker rm -f >/dev/null 2>&1 || true
 	[[ -n $CURRENT ]] && compose --profile "$CURRENT" down >/dev/null 2>&1 || true
 }
@@ -85,7 +86,12 @@ for v in $VARIANTS; do
 
 	log "[$v] coletando métricas do Prometheus"
 	sleep 10 # um scrape a mais depois do fim
-	t0=$(($(jtl_t0 "$LT/$rel/results.jtl") / 1000))
+	t0_ms=$(jtl_t0 "$LT/$rel/results.jtl")
+	if [[ -z $t0_ms ]]; then
+		echo "[$v] nenhum sample em $rel/results.jtl — veja $rel/jmeter.log" >&2
+		exit 1
+	fi
+	t0=$((t0_ms / 1000))
 	containers=chat-sync
 	[[ $v == queue ]] && containers="chat-api chat-worker"
 	# shellcheck disable=SC2086
