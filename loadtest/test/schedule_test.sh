@@ -17,3 +17,5 @@ sched_phases "$TMP/bad.env" 1 >/dev/null 2>&1
 assert_eq "perfil desconhecido falha" 1 "$?"
 sched_phase "$LT/tests/spike.env" 1 nope >/dev/null 2>&1
 assert_eq "fase inexistente falha" 1 "$?"
+( set +o pipefail; sched_phases "$TMP/bad.env" 1 >/dev/null 2>&1 ); assert_eq "perfil desconhecido falha sem pipefail" 1 "$?"
+( set +o pipefail; sched_main_end "$TMP/bad.env" 1 >/dev/null 2>&1 ); assert_eq "sched_main_end falha sem pipefail" 1 "$?"
