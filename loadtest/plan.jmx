@@ -122,7 +122,13 @@ vars.put(&apos;turn_deadline&apos;, String.valueOf(System.currentTimeMillis() + 
               <hashTree/>
             </hashTree>
             <WhileController guiclass="WhileControllerGui" testclass="WhileController" testname="polling">
-              <stringProp name="WhileController.condition">${__groovy(![&apos;DONE&apos;\,&apos;FAILED&apos;\,&apos;HTTP_ERROR&apos;].contains(vars.get(&apos;status&apos;)) &amp;&amp; System.currentTimeMillis() &lt; (vars.get(&apos;turn_deadline&apos;) as long))}</stringProp>
+              <!-- Quando o schedule termina com a conversa em andamento, OpenModelThreadGroup chama
+                   JMeterThread.stop() e Future.cancel(true) na thread OS: isso seta a interrupted
+                   flag da própria Thread (verificado empiricamente no 5.6.3), diferente de
+                   JMeterThread.interrupt(), que só afeta o sampler HTTP em voo. Sem checar essa
+                   flag aqui, um Thread.sleep() interrompido na "pausa polling" retorna na hora
+                   (throw engolido) e o While vira busy loop até turn_deadline, martelando a API. -->
+              <stringProp name="WhileController.condition">${__groovy(![&apos;DONE&apos;\,&apos;FAILED&apos;\,&apos;HTTP_ERROR&apos;].contains(vars.get(&apos;status&apos;)) &amp;&amp; System.currentTimeMillis() &lt; (vars.get(&apos;turn_deadline&apos;) as long) &amp;&amp; !Thread.currentThread().isInterrupted())}</stringProp>
             </WhileController>
             <hashTree>
               <TestAction guiclass="TestActionGui" testclass="TestAction" testname="pausa polling">
@@ -162,15 +168,24 @@ vars.put(&apos;turn_deadline&apos;, String.valueOf(System.currentTimeMillis() + 
               <stringProp name="scriptLanguage">groovy</stringProp>
               <stringProp name="cacheKey">true</stringProp>
               <stringProp name="script">// Classifica o turno; summarize.sh agrupa os erros pelo prefixo desta mensagem.
-def s = vars.get(&apos;status&apos;)
-if (s == &apos;DONE&apos;) {
-    SampleResult.setResponseMessage(&apos;DONE&apos;)
+// Turno cortado pelo fim do schedule (thread OS interrompida por OpenModelThreadGroup, ver
+// comentário no WhileController "polling"): não é DONE/FAILED/HTTP_ERROR/TIMEOUT de verdade,
+// é uma conversa iniciada antes do fim dos arrivals e sem dado utilizável. Ignora a amostra
+// (não entra no .jtl) e para a thread, para não emitir mais POSTs/turnos depois do fim do teste.
+if (Thread.currentThread().isInterrupted()) {
+    SampleResult.setIgnore()
+    ctx.getThread().stop()
 } else {
-    SampleResult.setSuccessful(false)
-    SampleResult.setResponseCode(&apos;500&apos;)
-    SampleResult.setResponseMessage(s == &apos;FAILED&apos; ? &apos;FAILED&apos;
-        : s == &apos;HTTP_ERROR&apos; ? &apos;HTTP &apos; + vars.get(&apos;http_code&apos;)
-        : &apos;TIMEOUT&apos;)
+    def s = vars.get(&apos;status&apos;)
+    if (s == &apos;DONE&apos;) {
+        SampleResult.setResponseMessage(&apos;DONE&apos;)
+    } else {
+        SampleResult.setSuccessful(false)
+        SampleResult.setResponseCode(&apos;500&apos;)
+        SampleResult.setResponseMessage(s == &apos;FAILED&apos; ? &apos;FAILED&apos;
+            : s == &apos;HTTP_ERROR&apos; ? &apos;HTTP &apos; + vars.get(&apos;http_code&apos;)
+            : &apos;TIMEOUT&apos;)
+    }
 }</stringProp>
             </JSR223Sampler>
             <hashTree/>
