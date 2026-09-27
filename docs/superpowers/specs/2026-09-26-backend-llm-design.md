@@ -282,7 +282,7 @@ Uma `@Tool` Java local, rápida e determinística — `consultarPrevisaoTempo(ci
 
 ## 13. Fora de escopo
 
-- Planos JMeter (próximo spec), incluindo avaliar o Backend Listener do JMeter para o Grafana.
+- Planos JMeter: especificados em `2026-09-26-jmeter-load-tests-design.md` (o Backend Listener foi avaliado e descartado lá).
 - Streaming de respostas, autenticação.
 - Outbox pattern, reaper de turnos órfãos, `x-max-length` na fila.
 - Ordenação de mensagens concorrentes na mesma conversa.

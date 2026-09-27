@@ -157,9 +157,20 @@ turnos simultâneos, `DB_POOL_SIZE`, `WORKER_CONCURRENCY` e o próprio orçament
   turno como `FAILED` e retorna `503`); não há reaper (um worker morto no meio do processamento
   deixa o turno preso em `PROCESSING`).
 
+## Testes de carga
+
+Smoke, stress e spike com JMeter, nas duas variantes, com SLOs e resumo comparativo:
+
+```bash
+loadtest/run.sh smoke    # ou stress, spike; [sync|queue|both]
+```
+
+Detalhes, perfis e SLOs em [`loadtest/README.md`](loadtest/README.md).
+
 ## Testes automatizados
 
 ```bash
 (cd llm-mock && go test ./...)
 (cd chat-app && ./mvnw test)   # precisa do Docker (Testcontainers)
+bash loadtest/test/test.sh     # ferramental dos testes de carga, sem Docker
 ```
