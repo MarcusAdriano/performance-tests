@@ -10,10 +10,18 @@ _jtl_rows() {
 		}' "$1"
 }
 
-# jtl_t0 <jtl> -> menor timeStamp (início do teste).
+# jtl_t0 <jtl> -> timeStamp da amostra "inicio" (marca gravada no início do schedule, I1);
+# se ausente (jtl antigo ou fixture sem a Thread Group "marca-inicio"), cai para o menor
+# timeStamp do arquivo, que era o critério antigo.
 jtl_t0() {
-	awk -F'\t' 'NR == 1 { for (i = 1; i <= NF; i++) if ($i == "timeStamp") c = i; next }
-		min == "" || $c < min { min = $c } END { print min }' "$1"
+	awk -F'\t' '
+		NR == 1 {
+			for (i = 1; i <= NF; i++) { if ($i == "timeStamp") c = i; if ($i == "label") l = i }
+			next
+		}
+		$l == "inicio" { print $c; found = 1; exit }
+		min == "" || $c < min { min = $c }
+		END { if (!found) print min }' "$1"
 }
 
 # jtl_turns <jtl> <from_ms> <to_ms> -> "início elapsed sucesso" dos turnos iniciados em [from, to).

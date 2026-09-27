@@ -19,7 +19,9 @@
         <stringProp name="HTTPSampler.protocol">http</stringProp>
         <stringProp name="HTTPSampler.implementation">HttpClient4</stringProp>
         <stringProp name="HTTPSampler.connect_timeout">5000</stringProp>
-        <stringProp name="HTTPSampler.response_timeout">${__P(post_timeout_ms,60000)}</stringProp>
+        <!-- post_timeout_ms padrão = turn_timeout_s * 1000: o POST (sync) recebe o mesmo orçamento
+             que um turno inteiro da queue (I2a). -Jturn_timeout_s sozinho já muda os dois. -->
+        <stringProp name="HTTPSampler.response_timeout">${__P(post_timeout_ms,${__jexl3(${__P(turn_timeout_s,120)}*1000)})}</stringProp>
       </ConfigTestElement>
       <hashTree/>
       <HeaderManager guiclass="HeaderPanel" testclass="HeaderManager" testname="JSON headers">
@@ -43,6 +45,32 @@
         <stringProp name="shareMode">shareMode.all</stringProp>
       </CSVDataSet>
       <hashTree/>
+      <!-- Marca o início do schedule: 1 thread, 1 iteração, sem ramp-up, então roda no mesmo
+           instante em que o Open Model Thread Group começa a gerar chegadas (serialize_threadgroups
+           = false). jtl_t0 usa o timeStamp desta amostra como t0 (I1) em vez do menor timeStamp
+           do .jtl, que hoje é a 1ª chegada aleatória (até dezenas de segundos depois do início). -->
+      <ThreadGroup guiclass="ThreadGroupGui" testclass="ThreadGroup" testname="marca-inicio">
+        <stringProp name="ThreadGroup.on_sample_error">continue</stringProp>
+        <elementProp name="ThreadGroup.main_controller" elementType="LoopController" guiclass="LoopControlPanel" testclass="LoopController" testname="Loop Controller">
+          <boolProp name="LoopController.continue_forever">false</boolProp>
+          <stringProp name="LoopController.loops">1</stringProp>
+        </elementProp>
+        <stringProp name="ThreadGroup.num_threads">1</stringProp>
+        <stringProp name="ThreadGroup.ramp_time">0</stringProp>
+        <boolProp name="ThreadGroup.scheduler">false</boolProp>
+        <stringProp name="ThreadGroup.duration"></stringProp>
+        <stringProp name="ThreadGroup.delay"></stringProp>
+      </ThreadGroup>
+      <hashTree>
+        <JSR223Sampler guiclass="TestBeanGUI" testclass="JSR223Sampler" testname="inicio">
+          <stringProp name="scriptLanguage">groovy</stringProp>
+          <stringProp name="cacheKey">true</stringProp>
+          <stringProp name="script">SampleResult.setSuccessful(true)
+SampleResult.setResponseCode(&apos;200&apos;)
+SampleResult.setResponseMessage(&apos;inicio&apos;)</stringProp>
+        </JSR223Sampler>
+        <hashTree/>
+      </hashTree>
       <OpenModelThreadGroup guiclass="OpenModelThreadGroupGui" testclass="OpenModelThreadGroup" testname="conversas">
         <elementProp name="ThreadGroup.main_controller" elementType="OpenModelThreadGroupController"/>
         <stringProp name="ThreadGroup.on_sample_error">continue</stringProp>
@@ -114,9 +142,15 @@ vars.put(&apos;turn_deadline&apos;, String.valueOf(System.currentTimeMillis() + 
               <JSR223PostProcessor guiclass="TestBeanGUI" testclass="JSR223PostProcessor" testname="erro HTTP">
                 <stringProp name="scriptLanguage">groovy</stringProp>
                 <stringProp name="cacheKey">true</stringProp>
-                <stringProp name="script">if (!prev.isSuccessful()) {
-    vars.put(&apos;status&apos;, &apos;HTTP_ERROR&apos;)
-    vars.put(&apos;http_code&apos;, prev.getResponseCode())
+                <stringProp name="script">// I2b: um timeout de leitura do cliente (SocketTimeoutException) é um TIMEOUT, não um HTTP.
+if (!prev.isSuccessful()) {
+    def code = prev.getResponseCode()
+    if (code != null &amp;&amp; code.contains(&apos;SocketTimeoutException&apos;)) {
+        vars.put(&apos;status&apos;, &apos;TIMEOUT_ERROR&apos;)
+    } else {
+        vars.put(&apos;status&apos;, &apos;HTTP_ERROR&apos;)
+        vars.put(&apos;http_code&apos;, code)
+    }
 }</stringProp>
               </JSR223PostProcessor>
               <hashTree/>
@@ -128,7 +162,7 @@ vars.put(&apos;turn_deadline&apos;, String.valueOf(System.currentTimeMillis() + 
                    JMeterThread.interrupt(), que só afeta o sampler HTTP em voo. Sem checar essa
                    flag aqui, um Thread.sleep() interrompido na "pausa polling" retorna na hora
                    (throw engolido) e o While vira busy loop até turn_deadline, martelando a API. -->
-              <stringProp name="WhileController.condition">${__groovy(![&apos;DONE&apos;\,&apos;FAILED&apos;\,&apos;HTTP_ERROR&apos;].contains(vars.get(&apos;status&apos;)) &amp;&amp; System.currentTimeMillis() &lt; (vars.get(&apos;turn_deadline&apos;) as long) &amp;&amp; !Thread.currentThread().isInterrupted())}</stringProp>
+              <stringProp name="WhileController.condition">${__groovy(![&apos;DONE&apos;\,&apos;FAILED&apos;\,&apos;HTTP_ERROR&apos;\,&apos;TIMEOUT_ERROR&apos;].contains(vars.get(&apos;status&apos;)) &amp;&amp; System.currentTimeMillis() &lt; (vars.get(&apos;turn_deadline&apos;) as long) &amp;&amp; !Thread.currentThread().isInterrupted())}</stringProp>
             </WhileController>
             <hashTree>
               <TestAction guiclass="TestActionGui" testclass="TestAction" testname="pausa polling">
@@ -141,6 +175,8 @@ vars.put(&apos;turn_deadline&apos;, String.valueOf(System.currentTimeMillis() + 
                 <stringProp name="HTTPSampler.path">/messages/${messageId}</stringProp>
                 <stringProp name="HTTPSampler.method">GET</stringProp>
                 <boolProp name="HTTPSampler.use_keepalive">true</boolProp>
+                <!-- Timeout próprio do polling (I2a): não herda post_timeout_ms do HTTP defaults. -->
+                <stringProp name="HTTPSampler.response_timeout">${__P(poll_timeout_ms,10000)}</stringProp>
                 <elementProp name="HTTPsampler.Arguments" elementType="Arguments" guiclass="HTTPArgumentsPanel" testclass="Arguments" testname="User Defined Variables">
                   <collectionProp name="Arguments.arguments"/>
                 </elementProp>
@@ -156,9 +192,15 @@ vars.put(&apos;turn_deadline&apos;, String.valueOf(System.currentTimeMillis() + 
                 <JSR223PostProcessor guiclass="TestBeanGUI" testclass="JSR223PostProcessor" testname="erro HTTP">
                   <stringProp name="scriptLanguage">groovy</stringProp>
                   <stringProp name="cacheKey">true</stringProp>
-                  <stringProp name="script">if (!prev.isSuccessful()) {
-    vars.put(&apos;status&apos;, &apos;HTTP_ERROR&apos;)
-    vars.put(&apos;http_code&apos;, prev.getResponseCode())
+                  <stringProp name="script">// I2b: um timeout de leitura do cliente (SocketTimeoutException) é um TIMEOUT, não um HTTP.
+if (!prev.isSuccessful()) {
+    def code = prev.getResponseCode()
+    if (code != null &amp;&amp; code.contains(&apos;SocketTimeoutException&apos;)) {
+        vars.put(&apos;status&apos;, &apos;TIMEOUT_ERROR&apos;)
+    } else {
+        vars.put(&apos;status&apos;, &apos;HTTP_ERROR&apos;)
+        vars.put(&apos;http_code&apos;, code)
+    }
 }</stringProp>
                 </JSR223PostProcessor>
                 <hashTree/>

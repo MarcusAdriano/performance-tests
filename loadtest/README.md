@@ -12,8 +12,11 @@ loadtest/run.sh stress queue     # só uma variante
 TIME_SCALE=10 loadtest/run.sh spike   # perfil 10x mais curto (validar o ferramental)
 ```
 
-Pré-requisitos: Docker, `jq`, `curl`. Cada variante sobe do zero (Postgres e Redis sem volume),
-é aquecida por 60s (descartados), testada e derrubada. Saída em `loadtest/results/<data>-<teste>/`:
+Pré-requisitos: Docker, `jq`, `curl`. `run.sh` primeiro derruba qualquer stack `sync`/`queue` já
+em execução (M8) — cada variante precisa subir do zero (Postgres e Redis sem volume). Cada
+variante é aquecida por 60s (descartados), testada e derrubada. Se `run.sh` sair com erro, ele
+imprime o caminho do diretório de resultados parciais dessa execução. Saída em
+`loadtest/results/<data>-<teste>/`:
 
 | Arquivo | Conteúdo |
 |---|---|
@@ -30,7 +33,8 @@ Uma conversa: `POST /conversations` e 5 turnos, com 1s de pausa entre eles. Cada
 `POST` da mensagem + polling em `GET /messages/{id}` a cada 500ms até `DONE`/`FAILED` (no `sync`
 o POST já volta pronto). O sample **`turno`** mede do POST ao resultado final — é a métrica
 comparável entre as variantes. Erros ficam no sample `turno-resultado`: `FAILED`, `TIMEOUT`
-(> 120s) ou `HTTP <código>`.
+(excedeu `turn_timeout_s`, 120s por padrão, **ou** um timeout de leitura do cliente no `POST`/`GET`)
+ou `HTTP <código>`.
 
 ## Perfis (`tests/*.env`, taxas em conversas/s; turnos/s = 5 ×)
 
@@ -55,7 +59,10 @@ conversas em andamento. Só entram nas estatísticas turnos iniciados antes dess
 
 `plan.jmx` abre na GUI de um JMeter 5.6.3 local (`jmeter -t loadtest/plan.jmx`). Parâmetros vêm
 de propriedades `-J` (`host`, `port`, `schedule`, `turns`, `think_ms`, `poll_ms`,
-`turn_timeout_s`, `post_timeout_ms`); para rodar pela GUI, defina `-Jhost=localhost`.
+`turn_timeout_s`, `post_timeout_ms`, `poll_timeout_ms`); para rodar pela GUI, defina
+`-Jhost=localhost`. `post_timeout_ms` (timeout do `POST` mensagem) tem por padrão o mesmo
+orçamento do turno inteiro (`turn_timeout_s * 1000`); `poll_timeout_ms` (timeout do `GET status`,
+padrão 10000ms) é independente. Um timeout de leitura do cliente conta como `TIMEOUT`, não `HTTP`.
 
 ## Testes do ferramental
 

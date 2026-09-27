@@ -17,7 +17,6 @@ pct() { if (($2 == 0)); then echo -; else awk -v a="$1" -v b="$2" 'BEGIN { print
 # le <= limite (valores decimais); "-" nunca passa.
 le() { [[ $1 != - ]] && awk -v a="$1" -v b="$2" 'BEGIN { exit !(a <= b) }'; }
 lt() { [[ $1 != - ]] && awk -v a="$1" -v b="$2" 'BEGIN { exit !(a < b) }'; }
-mark() { if "$@"; then echo ✅; else echo ❌; fi; }
 
 # window_stats <jtl> <from_ms> <to_ms> -> "n erros p50 p95 p99 max erros_pct turnos_ok_por_s"
 window_stats() {
@@ -27,12 +26,16 @@ window_stats() {
 	echo "$s $(pct "$err" "$n") $(awk -v n="$n" -v e="$err" -v d="$(($3 - $2))" 'BEGIN { printf "%.2f", (n - e) * 1000 / d }')"
 }
 
-# drain_s <metrics.json> <peak_start_s> <peak_end_s> -> segundos, -1 (não drenou) ou "-" (sem dados).
+# drain_s <metrics.json> <t0_s> <peak_start_s> <peak_end_s> -> segundos, -1 (não drenou) ou "-" (sem dados).
+# A janela da linha de base (60s antes do início do pico) é limitada a partir de t0 (M5): sem o
+# clamp, em TIME_SCALE grande o início do pico fica a menos de 60s de t0 e a janela vaza para
+# dados de aquecimento/pré-teste, inflando a linha de base e mascarando a drenagem real.
 drain_s() {
-	jq -r --argjson ps "$2" --argjson pe "$3" '
+	jq -r --argjson t0 "$2" --argjson ps "$3" --argjson pe "$4" '
 		.pending as $p
+		| (if ($ps - 60) > $t0 then $ps - 60 else $t0 end) as $base_from
 		| if ($p | length) == 0 then "-" else
-			([$p[] | select(.[0] >= $ps - 60 and .[0] < $ps) | .[1]] | max // 0) as $base
+			([$p[] | select(.[0] >= $base_from and .[0] < $ps) | .[1]] | max // 0) as $base
 			| ([$p[] | select(.[0] >= $pe and .[1] <= $base) | .[0]] | min) as $t
 			| if $t == null then -1 else ($t - $pe) end
 		end' "$1"
@@ -70,7 +73,7 @@ for v in $VARIANTS; do
 			ps_ms=$(awk -v t="$t0" -v s="$ps" 'BEGIN { printf "%d", t + s * 1000 }')
 			pe_ms=$(awk -v t="$t0" -v s="$pe" 'BEGIN { printf "%d", t + s * 1000 }')
 			echo "RECOVERY_S=$(jtl_recovery_s "$jtl" "$pe_ms" "$main_end" "$((SPIKE_P95_S * 1000))")"
-			echo "DRAIN_S=$(drain_s "$DIR/$v/metrics.json" "$((ps_ms / 1000))" "$((pe_ms / 1000))")"
+			echo "DRAIN_S=$(drain_s "$DIR/$v/metrics.json" "$((t0 / 1000))" "$((ps_ms / 1000))" "$((pe_ms / 1000))")"
 			;;
 		esac
 		jq -r 'to_entries[] | select(.key != "pending")
@@ -91,8 +94,8 @@ header() {
 }
 
 FAIL=0
-check() { # check <variante> <valor exibido> <condição...>: imprime "valor ✅|❌" e acumula falhas
-	local v=$1 shown=$2
+check() { # check <variante (ignorado, mantido pela assinatura comum das *_row)> <valor exibido> <condição...>: imprime "valor ✅|❌" e acumula falhas
+	local shown=$2
 	shift 2
 	if "$@"; then echo "$shown ✅"; else echo "$shown ❌"; FAIL=1; fi
 }

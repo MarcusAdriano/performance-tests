@@ -23,6 +23,11 @@ prom_instant() {
 		--data-urlencode "time=$2" | prom_values | jq '.[0][1] // null'
 }
 
+# prom_round2 <número|null> -> arredondado para 2 casas decimais (M6, só para exibição); null passa direto.
+prom_round2() {
+	jq -n --argjson v "$1" '$v | if . == null then null else (. * 100 | round) / 100 end'
+}
+
 # prom_collect <sync|queue> <start_s> <end_s> -> objeto JSON gravado em metrics.json.
 # "pending" é a métrica de trabalho pendente usada no SLO de drenagem do spike.
 prom_collect() {
@@ -31,10 +36,12 @@ prom_collect() {
 	if [[ $variant == queue ]]; then
 		pending='sum(rabbitmq_queue_messages_ready{queue="chat.turns.process"})'
 		backlog=$(prom_range "$pending" "$start" "$end")
-		wait_p95=$(prom_instant "histogram_quantile(0.95, sum by (le) (increase(chat_turn_queue_wait_seconds_bucket{mode=\"worker\"}[${range}s])))" "$end")
+		wait_p95=$(prom_round2 "$(prom_instant "histogram_quantile(0.95, sum by (le) (increase(chat_turn_queue_wait_seconds_bucket{mode=\"worker\"}[${range}s])))" "$end")")
 	else
 		pending='sum(chat_turns_inflight{mode="sync"})'
 	fi
+	local throttled
+	throttled=$(prom_round2 "$(prom_instant "100 * sum(increase(container_cpu_cfs_throttled_periods_total{$chat}[${range}s])) / sum(increase(container_cpu_cfs_periods_total{$chat}[${range}s]))" "$end")")
 	jq -n \
 		--argjson pending "$(prom_range "$pending" "$start" "$end")" \
 		--argjson backlog "$backlog" \
@@ -42,7 +49,7 @@ prom_collect() {
 		--argjson hikari "$(prom_range 'sum(hikaricp_connections_pending)' "$start" "$end")" \
 		--argjson heap "$(prom_range 'max(sum by (application) (jvm_memory_used_bytes{area="heap"}))' "$start" "$end")" \
 		--argjson heap_max "$(prom_instant 'max(sum by (application) (jvm_memory_max_bytes{area="heap"}))' "$end")" \
-		--argjson throttled "$(prom_instant "100 * sum(increase(container_cpu_cfs_throttled_periods_total{$chat}[${range}s])) / sum(increase(container_cpu_cfs_periods_total{$chat}[${range}s]))" "$end")" \
+		--argjson throttled "$throttled" \
 		--argjson wait_p95 "$wait_p95" '
 		def peak: if length == 0 then null else (map(.[1]) | max) end;
 		{

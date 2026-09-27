@@ -71,3 +71,15 @@ spike_jtl 260 | mk_jtl "$TMP/spike-nodata/sync/results.jtl"
 "$LT/summarize.sh" "$TMP/spike-nodata" >/dev/null
 assert_eq "spike sem métrica de drenagem sai com 1" 1 "$?"
 assert_contains "spike: drenagem n/d" "| Drenagem em ≤ 180 s | n/d ❌ |" "$TMP/spike-nodata/summary.md"
+
+# M5: com TIME_SCALE=30 a janela de linha de base (60s antes do início do pico) fica antes de t0
+# (pico em t0+6s). Sem o clamp, a linha de base pegaria um pico de "backlog" pré-teste (t=960,
+# aquecimento) e o SLO passaria de forma otimista/errada; com o clamp em t0, a linha de base real
+# (2) é usada e a drenagem é computada corretamente (52s).
+mk_run "$TMP/spike-clamp" spike 30 queue
+awk 'BEGIN { for (t = 0; t < 20000; t += 500) print 1000000 + t, 300, "DONE", "s" }' | mk_jtl "$TMP/spike-clamp/queue/results.jtl"
+jq -n "$METRICS"' | .pending = [[960,999],[1000,2],[1003,2],[1005,2],[1006,50],[1007,50],[1010,50],[1020,50],[1060,2]]' \
+	>"$TMP/spike-clamp/queue/metrics.json"
+"$LT/summarize.sh" "$TMP/spike-clamp" >/dev/null
+assert_contains "M5: drenagem usa linha de base pós-t0 (52s), não o pico pré-teste" \
+	"| Drenagem em ≤ 180 s | 52 s ✅ |" "$TMP/spike-clamp/summary.md"

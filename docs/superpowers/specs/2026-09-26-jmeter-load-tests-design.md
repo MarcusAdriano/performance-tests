@@ -54,27 +54,39 @@ Alterações fora de `loadtest/`:
 ```
 Test Plan
 ├── HTTP Request Defaults  host=${__P(host)} port=${__P(port,8080)}
+│     response timeout ${__P(post_timeout_ms,turn_timeout_s*1000)}
 ├── HTTP Header Manager    Content-Type: application/json
 ├── CSV Data Set           data/cities.csv → ${city}
+├── Thread Group "marca-inicio"  1 thread, 1 loop, sem ramp-up
+│   └── JSR223 Sampler "inicio"  (no-op, sucesso; marca o início do schedule — ver t0 em §6)
 └── Open Model Thread Group  schedule=${__P(schedule)}
     ├── POST /conversations                          → JSON Extractor conversationId
     └── Loop ${__P(turns,5)}
         ├── Transaction Controller "turno" (generate parent sample)
         │   ├── POST /conversations/${conversationId}/messages {"content":"${city}"}
-        │   │     → extrai messageId, status; response timeout ${__P(post_timeout_ms,60000)}
-        │   └── While status ∉ {DONE, FAILED} e decorrido < ${__P(turn_timeout_s,120)}s
+        │   │     → extrai messageId, status
+        │   └── While status ∉ {DONE, FAILED, HTTP_ERROR, TIMEOUT_ERROR} e decorrido < ${__P(turn_timeout_s,120)}s
         │       ├── pausa ${__P(poll_ms,500)}
-        │       └── GET /messages/${messageId}      → extrai status
+        │       └── GET /messages/${messageId}      → extrai status; response timeout ${__P(poll_timeout_ms,10000)}
         │   └── JSR223 Sampler "turno-resultado": sucesso se status == DONE; senão falha com
         │       mensagem FAILED | TIMEOUT | HTTP <código>
         └── pausa ${__P(think_ms,1000)}
 ```
 
 - Cada chegada do Open Model Thread Group executa uma iteração = uma conversa.
+- A Thread Group "marca-inicio" roda em paralelo ao Open Model Thread Group desde o instante em
+  que o teste começa (`serialize_threadgroups=false`): sua única amostra, `inicio`, marca o
+  início real do schedule — ver definição de **t0** em §6.
 - **Métrica principal: o sample pai `turno`** — do `POST` até o status final. Comparável entre variantes: no `sync` é praticamente o `POST`; na `queue` soma `POST` + espera na fila + processamento + polling.
 - Samples filhos (`POST mensagem`, `GET status`) ficam no `.jtl` para análise fina.
 - O Transaction Controller roda **sem** "generate parent sample" e com "include timers": grava um sample `turno` (tempo de parede, incluindo pausas do polling) depois dos filhos. Sucesso do `turno` = todos os filhos com sucesso.
-- **Classificação de erro** na `responseMessage` do sample `turno-resultado` (a do `turno` é o texto fixo do Transaction Controller): `FAILED` (turno terminou em FAILED), `TIMEOUT` (excedeu `turn_timeout_s`), `HTTP <código>` (qualquer resposta não 2xx ou erro de conexão). Em erro HTTP o turno é encerrado e a conversa segue para o próximo turno.
+- **Timeouts (I2):** `post_timeout_ms` (POST mensagem, herdado do HTTP Request Defaults) tem por
+  padrão o mesmo orçamento que um turno inteiro (`turn_timeout_s * 1000`), em vez de um valor fixo
+  menor que o da `queue` — sem isso o `sync` estourava por `SocketTimeoutException` em turnos que a
+  `queue` ainda completaria como `DONE`. `poll_timeout_ms` (GET status, padrão 10000ms) é
+  independente. `-Jturn_timeout_s` sozinho já ajusta `post_timeout_ms`; passar `-Jpost_timeout_ms`
+  explicitamente o desacopla.
+- **Classificação de erro** na `responseMessage` do sample `turno-resultado` (a do `turno` é o texto fixo do Transaction Controller): `FAILED` (turno terminou em FAILED), `TIMEOUT` (excedeu `turn_timeout_s` **ou** um `POST`/`GET` sofreu timeout de leitura do cliente — `SocketTimeoutException` —, o que os pós-processadores "erro HTTP" tratam como `TIMEOUT_ERROR`, não `HTTP_ERROR`), `HTTP <código>` (qualquer outra resposta não 2xx ou erro de conexão). Em erro HTTP ou timeout de cliente o turno é encerrado e a conversa segue para o próximo turno.
 - Falha em `POST /conversations`: `conversationId` recebe um UUID inexistente, os 5 turnos recebem `404` e contam como erro `HTTP`. Toda chegada produz exatamente 5 samples `turno`.
 - Polling de 500ms introduz até 0,5s de erro de medição no `turno` da `queue` — aceito frente a turnos de 4–10s.
 - `.jtl` em CSV **separado por TAB** (a mensagem do Transaction Controller contém vírgulas), com cabeçalho e os campos padrão (`timeStamp` = início do sample, em ms). Definido em `user.properties`, carregado com `-q`, que vale também para o relatório HTML.
@@ -94,6 +106,9 @@ Arquivos `tests/<teste>.env` são a **fonte única**: `lib/schedule.sh` gera a s
 - Spike: base → rampa de `JUMP_S` até o pico → pico → rampa de `JUMP_S` de volta à base → cauda.
 - Pico de 4 conversas/s ≈ 3× a capacidade estimada da `queue` (≈ 50 / 7s ≈ 7 turnos/s ≈ 1,4 conversas/s), de propósito.
 - **Pausa de drenagem:** ao fim do schedule, o Open Model Thread Group **interrompe** as conversas em andamento (verificado no 5.6.3). Por isso toda string de schedule termina com `pause(DRAIN_S)`, `DRAIN_S = turn_timeout_s + 60` (180s por padrão), e a análise considera **só turnos iniciados antes do fim das chegadas** (`fim principal`): todos eles terminam (DONE, FAILED ou TIMEOUT) dentro da pausa. Turnos iniciados durante a pausa são ignorados. A pausa não é encurtada por `TIME_SCALE` e sempre dura o valor inteiro.
+  Pior caso de duração de um turno agora que `post_timeout_ms = turn_timeout_s * 1000` (I2a):
+  `turn_timeout_s` (POST) + `poll_ms` (~0,5s) + `poll_timeout_ms` (10s, GET) + `connect_timeout`
+  (5s) ≈ `turn_timeout_s` + 16s — cabe folgado na margem de 60s do `DRAIN_S`.
 - `TIME_SCALE` (env, padrão `1`) divide todas as durações do perfil (não a pausa de drenagem). Serve para executar versões encurtadas durante a verificação da implementação.
 - Sintaxe validada com o parser do JMeter 5.6.3: `rate(0/s) random_arrivals(30 s) rate(0.5/s) random_arrivals(180 s) rate(0.5/s) … pause(180 s)`; taxas iguais antes e depois de um `random_arrivals` = patamar, diferentes = rampa linear; decimais são aceitos.
 
@@ -109,10 +124,19 @@ Arquivos `tests/<teste>.env` são a **fonte única**: `lib/schedule.sh` gera a s
 
 Definições precisas:
 
-- **t0** = menor `timeStamp` do `.jtl` do teste. Todas as estatísticas usam turnos com início em [t0, t0 + fim principal). Fases e degraus são janelas relativas a t0, derivadas de `tests/<teste>.env` (com `TIME_SCALE`).
+- **t0** = `timeStamp` da amostra `inicio` (marca o início real do schedule, gravada pela Thread
+  Group "marca-inicio" — ver §4). O modelo aberto gera chegadas aleatórias, então a primeira
+  chegada de verdade pode ficar dezenas de segundos depois do início do schedule; sem a marca,
+  `t0` (e todas as janelas de fase derivadas dele) ficaria deslocado por esse δ, diferente por
+  variante e por execução. Na ausência da amostra `inicio` (`.jtl` antigo, gerado antes desta
+  marca), `t0` cai para o menor `timeStamp` do arquivo — critério anterior. Todas as estatísticas
+  usam turnos com início em [t0, t0 + fim principal). Fases e degraus são janelas relativas a t0,
+  derivadas de `tests/<teste>.env` (com `TIME_SCALE`).
 - **Atribuição a degrau (stress):** um `turno` pertence ao degrau em cujo **patamar** o seu `timeStamp` (início) cai. Turnos iniciados em rampas não entram nas linhas por degrau (entram nos totais).
 - **Recuperação (spike):** janelas de 30s sobre os `turno` agrupados por instante de término (`timeStamp + elapsed`), avançando de 5s em 5s a partir do fim do pico. Tempo de recuperação = início da primeira janela a partir da qual **todas** as janelas seguintes até o fim do teste têm p95 ≤ `SPIKE_P95_S=15`, menos o instante de fim do pico. Se não recuperar, o SLO falha e o valor é reportado como `> TAIL_S`.
-- **Drenagem (spike):** métrica de trabalho pendente — `queue`: `sum(rabbitmq_queue_messages_ready{queue="chat.turns.process"})`; `sync`: `sum(chat_turns_inflight{mode="sync"})`. Início do pico = início da rampa de subida. Linha de base = máximo da métrica nos 60s antes do início do pico (0 se não houver pontos). Tempo de drenagem = primeiro instante após o fim do pico em que a métrica fica ≤ linha de base, menos o fim do pico. Consulta via `query_range` com `step=5s`. Sem nenhum ponto da métrica → `n/d` e o SLO **reprova** (não há como comprovar).
+- **Drenagem (spike):** métrica de trabalho pendente — `queue`: `sum(rabbitmq_queue_messages_ready{queue="chat.turns.process"})`; `sync`: `sum(chat_turns_inflight{mode="sync"})`. Início do pico = início da rampa de subida. Linha de base = máximo da métrica nos 60s antes do início do pico, **sem passar de t0** (M5: em
+`TIME_SCALE` grande o início do pico fica a menos de 60s de t0, e sem esse limite a janela vazaria
+para dados de aquecimento/pré-teste) (0 se não houver pontos). Tempo de drenagem = primeiro instante após o fim do pico em que a métrica fica ≤ linha de base, menos o fim do pico. Consulta via `query_range` com `step=5s`. Sem nenhum ponto da métrica → `n/d` e o SLO **reprova** (não há como comprovar).
 
 `run.sh` sai com código ≠ 0 se qualquer SLO de smoke ou spike falhar em qualquer variante executada.
 

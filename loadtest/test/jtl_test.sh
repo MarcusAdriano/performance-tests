@@ -19,7 +19,13 @@ T
 awk -F'\t' 'BEGIN { OFS = "\t" } $6 == "c1-4" && $3 == "turno-resultado" { $5 = "HTTP 404" }
 	$6 == "c1-5" && $3 == "turno-resultado" { $5 = "HTTP Non HTTP response code: java.net.SocketTimeoutException" } { print }' \
 	"$TMP/a.jtl" >"$TMP/a2.jtl"
-assert_eq "t0" 1000000 "$(jtl_t0 "$TMP/a2.jtl")"
+assert_eq "t0 sem linha inicio: cai para o menor timeStamp" 1000000 "$(jtl_t0 "$TMP/a2.jtl")"
+
+# I1: com uma linha "inicio" (marca o início real do schedule), t0 = timeStamp dela, mesmo que
+# não seja o menor timeStamp do arquivo (a 1ª chegada aleatória grava um timeStamp menor às vezes,
+# por reamostragem de threads; e sempre grava um maior, δ depois do início do schedule).
+printf '1000050\t5\tinicio\t200\tinicio\tinicio 1-0\ttrue\n' >>"$TMP/a2.jtl"
+assert_eq "t0 com linha inicio: usa o timeStamp dela" 1000050 "$(jtl_t0 "$TMP/a2.jtl")"
 assert_eq "turnos na janela [from,to)" "2" "$(jtl_turns "$TMP/a2.jtl" 1000200 1000400 | wc -l | tr -d ' ')"
 assert_eq "fixture: mensagem HTTP completa" 1 "$(grep -c $'\tHTTP Non HTTP response code: java.net.SocketTimeoutException\t' "$TMP/a2.jtl")"
 assert_eq "erros por tipo" "$(printf 'FAILED 1\nTIMEOUT 1\nHTTP 2')" "$(jtl_errors "$TMP/a2.jtl" 0 2000000)"
