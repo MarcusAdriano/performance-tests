@@ -30,7 +30,7 @@ sched_phases() {
 			;;
 		*) echo "PROFILE desconhecido em $env_file: '$PROFILE'" >&2; exit 1 ;;
 		esac
-	) > "$tmpfile" 2>&1 || { rm -f "$tmpfile"; return 1; }
+	) > "$tmpfile" || { rm -f "$tmpfile"; return 1; }
 	lines=$(cat "$tmpfile")
 	rm -f "$tmpfile"
 	printf '%s\n' "$lines" | awk -v scale="$scale" 'BEGIN { OFS = "\t"; t = 0 }
