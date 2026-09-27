@@ -1,0 +1,188 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<jmeterTestPlan version="1.2" properties="5.0" jmeter="5.6.3">
+  <hashTree>
+    <TestPlan guiclass="TestPlanGui" testclass="TestPlan" testname="chat-llm">
+      <stringProp name="TestPlan.comments">Uma chegada = uma conversa de ${turns} turnos. Parâmetros via -J (ver loadtest/README.md).</stringProp>
+      <boolProp name="TestPlan.functional_mode">false</boolProp>
+      <boolProp name="TestPlan.serialize_threadgroups">false</boolProp>
+      <elementProp name="TestPlan.user_defined_variables" elementType="Arguments" guiclass="ArgumentsPanel" testclass="Arguments" testname="User Defined Variables">
+        <collectionProp name="Arguments.arguments"/>
+      </elementProp>
+    </TestPlan>
+    <hashTree>
+      <ConfigTestElement guiclass="HttpDefaultsGui" testclass="ConfigTestElement" testname="HTTP defaults">
+        <elementProp name="HTTPsampler.Arguments" elementType="Arguments" guiclass="HTTPArgumentsPanel" testclass="Arguments" testname="User Defined Variables">
+          <collectionProp name="Arguments.arguments"/>
+        </elementProp>
+        <stringProp name="HTTPSampler.domain">${__P(host,localhost)}</stringProp>
+        <stringProp name="HTTPSampler.port">${__P(port,8080)}</stringProp>
+        <stringProp name="HTTPSampler.protocol">http</stringProp>
+        <stringProp name="HTTPSampler.implementation">HttpClient4</stringProp>
+        <stringProp name="HTTPSampler.connect_timeout">5000</stringProp>
+        <stringProp name="HTTPSampler.response_timeout">${__P(post_timeout_ms,60000)}</stringProp>
+      </ConfigTestElement>
+      <hashTree/>
+      <HeaderManager guiclass="HeaderPanel" testclass="HeaderManager" testname="JSON headers">
+        <collectionProp name="HeaderManager.headers">
+          <elementProp name="" elementType="Header">
+            <stringProp name="Header.name">Content-Type</stringProp>
+            <stringProp name="Header.value">application/json</stringProp>
+          </elementProp>
+        </collectionProp>
+      </HeaderManager>
+      <hashTree/>
+      <CSVDataSet guiclass="TestBeanGUI" testclass="CSVDataSet" testname="cidades">
+        <stringProp name="filename">data/cities.csv</stringProp>
+        <stringProp name="fileEncoding">UTF-8</stringProp>
+        <stringProp name="variableNames"></stringProp>
+        <boolProp name="ignoreFirstLine">false</boolProp>
+        <stringProp name="delimiter">,</stringProp>
+        <boolProp name="quotedData">false</boolProp>
+        <boolProp name="recycle">true</boolProp>
+        <boolProp name="stopThread">false</boolProp>
+        <stringProp name="shareMode">shareMode.all</stringProp>
+      </CSVDataSet>
+      <hashTree/>
+      <OpenModelThreadGroup guiclass="OpenModelThreadGroupGui" testclass="OpenModelThreadGroup" testname="conversas">
+        <elementProp name="ThreadGroup.main_controller" elementType="OpenModelThreadGroupController"/>
+        <stringProp name="ThreadGroup.on_sample_error">continue</stringProp>
+        <stringProp name="OpenModelThreadGroup.schedule">${__P(schedule,rate(0.1/s) random_arrivals(10 s) rate(0.1/s))}</stringProp>
+        <stringProp name="OpenModelThreadGroup.random_seed"></stringProp>
+      </OpenModelThreadGroup>
+      <hashTree>
+        <HTTPSamplerProxy guiclass="HttpTestSampleGui" testclass="HTTPSamplerProxy" testname="POST conversa">
+          <stringProp name="HTTPSampler.path">/conversations</stringProp>
+          <stringProp name="HTTPSampler.method">POST</stringProp>
+          <boolProp name="HTTPSampler.use_keepalive">true</boolProp>
+          <elementProp name="HTTPsampler.Arguments" elementType="Arguments" guiclass="HTTPArgumentsPanel" testclass="Arguments" testname="User Defined Variables">
+            <collectionProp name="Arguments.arguments"/>
+          </elementProp>
+        </HTTPSamplerProxy>
+        <hashTree>
+          <JSONPostProcessor guiclass="JSONPostProcessorGui" testclass="JSONPostProcessor" testname="conversationId">
+            <stringProp name="JSONPostProcessor.referenceNames">conversationId</stringProp>
+            <stringProp name="JSONPostProcessor.jsonPathExprs">$.conversationId</stringProp>
+            <stringProp name="JSONPostProcessor.match_numbers">1</stringProp>
+            <!-- Conversa não criada: os turnos vão para um id inexistente, recebem 404 e contam como erro HTTP. -->
+            <stringProp name="JSONPostProcessor.defaultValues">00000000-0000-0000-0000-000000000000</stringProp>
+          </JSONPostProcessor>
+          <hashTree/>
+        </hashTree>
+        <LoopController guiclass="LoopControlPanel" testclass="LoopController" testname="turnos">
+          <stringProp name="LoopController.loops">${__P(turns,5)}</stringProp>
+          <boolProp name="LoopController.continue_forever">true</boolProp>
+        </LoopController>
+        <hashTree>
+          <TransactionController guiclass="TransactionControllerGui" testclass="TransactionController" testname="turno">
+            <boolProp name="TransactionController.parent">false</boolProp>
+            <!-- true: o sample "turno" mede o tempo de parede, incluindo as pausas do polling. -->
+            <boolProp name="TransactionController.includeTimers">true</boolProp>
+          </TransactionController>
+          <hashTree>
+            <HTTPSamplerProxy guiclass="HttpTestSampleGui" testclass="HTTPSamplerProxy" testname="POST mensagem">
+              <stringProp name="HTTPSampler.path">/conversations/${conversationId}/messages</stringProp>
+              <stringProp name="HTTPSampler.method">POST</stringProp>
+              <boolProp name="HTTPSampler.use_keepalive">true</boolProp>
+              <boolProp name="HTTPSampler.postBodyRaw">true</boolProp>
+              <elementProp name="HTTPsampler.Arguments" elementType="Arguments">
+                <collectionProp name="Arguments.arguments">
+                  <elementProp name="" elementType="HTTPArgument">
+                    <boolProp name="HTTPArgument.always_encode">false</boolProp>
+                    <stringProp name="Argument.value">{&quot;content&quot;:&quot;${city}&quot;}</stringProp>
+                    <stringProp name="Argument.metadata">=</stringProp>
+                  </elementProp>
+                </collectionProp>
+              </elementProp>
+            </HTTPSamplerProxy>
+            <hashTree>
+              <JSR223PreProcessor guiclass="TestBeanGUI" testclass="JSR223PreProcessor" testname="inicia turno">
+                <stringProp name="scriptLanguage">groovy</stringProp>
+                <stringProp name="cacheKey">true</stringProp>
+                <stringProp name="script">vars.put(&apos;status&apos;, &apos;NONE&apos;)
+vars.put(&apos;http_code&apos;, &apos;&apos;)
+long timeoutMs = (props.getProperty(&apos;turn_timeout_s&apos;, &apos;120&apos;) as long) * 1000
+vars.put(&apos;turn_deadline&apos;, String.valueOf(System.currentTimeMillis() + timeoutMs))</stringProp>
+              </JSR223PreProcessor>
+              <hashTree/>
+              <JSONPostProcessor guiclass="JSONPostProcessorGui" testclass="JSONPostProcessor" testname="messageId, status">
+                <stringProp name="JSONPostProcessor.referenceNames">messageId;status</stringProp>
+                <stringProp name="JSONPostProcessor.jsonPathExprs">$.messageId;$.status</stringProp>
+                <stringProp name="JSONPostProcessor.match_numbers">1;1</stringProp>
+                <stringProp name="JSONPostProcessor.defaultValues">NONE;NONE</stringProp>
+              </JSONPostProcessor>
+              <hashTree/>
+              <JSR223PostProcessor guiclass="TestBeanGUI" testclass="JSR223PostProcessor" testname="erro HTTP">
+                <stringProp name="scriptLanguage">groovy</stringProp>
+                <stringProp name="cacheKey">true</stringProp>
+                <stringProp name="script">if (!prev.isSuccessful()) {
+    vars.put(&apos;status&apos;, &apos;HTTP_ERROR&apos;)
+    vars.put(&apos;http_code&apos;, prev.getResponseCode())
+}</stringProp>
+              </JSR223PostProcessor>
+              <hashTree/>
+            </hashTree>
+            <WhileController guiclass="WhileControllerGui" testclass="WhileController" testname="polling">
+              <stringProp name="WhileController.condition">${__groovy(![&apos;DONE&apos;\,&apos;FAILED&apos;\,&apos;HTTP_ERROR&apos;].contains(vars.get(&apos;status&apos;)) &amp;&amp; System.currentTimeMillis() &lt; (vars.get(&apos;turn_deadline&apos;) as long))}</stringProp>
+            </WhileController>
+            <hashTree>
+              <TestAction guiclass="TestActionGui" testclass="TestAction" testname="pausa polling">
+                <intProp name="ActionProcessor.action">1</intProp>
+                <intProp name="ActionProcessor.target">0</intProp>
+                <stringProp name="ActionProcessor.duration">${__P(poll_ms,500)}</stringProp>
+              </TestAction>
+              <hashTree/>
+              <HTTPSamplerProxy guiclass="HttpTestSampleGui" testclass="HTTPSamplerProxy" testname="GET status">
+                <stringProp name="HTTPSampler.path">/messages/${messageId}</stringProp>
+                <stringProp name="HTTPSampler.method">GET</stringProp>
+                <boolProp name="HTTPSampler.use_keepalive">true</boolProp>
+                <elementProp name="HTTPsampler.Arguments" elementType="Arguments" guiclass="HTTPArgumentsPanel" testclass="Arguments" testname="User Defined Variables">
+                  <collectionProp name="Arguments.arguments"/>
+                </elementProp>
+              </HTTPSamplerProxy>
+              <hashTree>
+                <JSONPostProcessor guiclass="JSONPostProcessorGui" testclass="JSONPostProcessor" testname="status">
+                  <stringProp name="JSONPostProcessor.referenceNames">status</stringProp>
+                  <stringProp name="JSONPostProcessor.jsonPathExprs">$.status</stringProp>
+                  <stringProp name="JSONPostProcessor.match_numbers">1</stringProp>
+                  <stringProp name="JSONPostProcessor.defaultValues">NONE</stringProp>
+                </JSONPostProcessor>
+                <hashTree/>
+                <JSR223PostProcessor guiclass="TestBeanGUI" testclass="JSR223PostProcessor" testname="erro HTTP">
+                  <stringProp name="scriptLanguage">groovy</stringProp>
+                  <stringProp name="cacheKey">true</stringProp>
+                  <stringProp name="script">if (!prev.isSuccessful()) {
+    vars.put(&apos;status&apos;, &apos;HTTP_ERROR&apos;)
+    vars.put(&apos;http_code&apos;, prev.getResponseCode())
+}</stringProp>
+                </JSR223PostProcessor>
+                <hashTree/>
+              </hashTree>
+            </hashTree>
+            <JSR223Sampler guiclass="TestBeanGUI" testclass="JSR223Sampler" testname="turno-resultado">
+              <stringProp name="scriptLanguage">groovy</stringProp>
+              <stringProp name="cacheKey">true</stringProp>
+              <stringProp name="script">// Classifica o turno; summarize.sh agrupa os erros pelo prefixo desta mensagem.
+def s = vars.get(&apos;status&apos;)
+if (s == &apos;DONE&apos;) {
+    SampleResult.setResponseMessage(&apos;DONE&apos;)
+} else {
+    SampleResult.setSuccessful(false)
+    SampleResult.setResponseCode(&apos;500&apos;)
+    SampleResult.setResponseMessage(s == &apos;FAILED&apos; ? &apos;FAILED&apos;
+        : s == &apos;HTTP_ERROR&apos; ? &apos;HTTP &apos; + vars.get(&apos;http_code&apos;)
+        : &apos;TIMEOUT&apos;)
+}</stringProp>
+            </JSR223Sampler>
+            <hashTree/>
+          </hashTree>
+          <TestAction guiclass="TestActionGui" testclass="TestAction" testname="pausa leitura">
+            <intProp name="ActionProcessor.action">1</intProp>
+            <intProp name="ActionProcessor.target">0</intProp>
+            <stringProp name="ActionProcessor.duration">${__P(think_ms,1000)}</stringProp>
+          </TestAction>
+          <hashTree/>
+        </hashTree>
+      </hashTree>
+    </hashTree>
+  </hashTree>
+</jmeterTestPlan>
