@@ -86,7 +86,7 @@ for v in $VARIANTS; do
 
 	log "[$v] coletando métricas do Prometheus"
 	sleep 10 # um scrape a mais depois do fim
-	t0_ms=$(jtl_t0 "$LT/$rel/results.jtl")
+	t0_ms=$(jtl_t0 "$LT/$rel/results.jtl" 2>/dev/null) || t0_ms=""
 	if [[ -z $t0_ms ]]; then
 		echo "[$v] nenhum sample em $rel/results.jtl — veja $rel/jmeter.log" >&2
 		exit 1
