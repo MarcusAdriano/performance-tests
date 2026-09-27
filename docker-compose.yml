@@ -153,3 +153,12 @@ services:
       - ./observability/grafana/dashboards:/var/lib/grafana/dashboards:ro
     ports: ["3000:3000"]
     depends_on: [prometheus]
+
+  # --- Load generator (see loadtest/run.sh) -----------------------------------
+  # docker compose --profile loadtest run --rm jmeter -n -t /loadtest/plan.jmx ...
+  jmeter:
+    build: ./loadtest
+    image: backendllm/jmeter:5.6.3
+    profiles: [loadtest]
+    volumes:
+      - ./loadtest:/loadtest
