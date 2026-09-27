@@ -11,8 +11,8 @@ mk_jtl "$TMP/a.jtl" <<'T'
 1000100 4000 DONE c1-1
 1000200 9000 FAILED c1-2
 1000300 120000 TIMEOUT c1-3
-1000400 50 HTTP 404 c1-4
-1000500 60000 HTTP Non HTTP response code: java.net.SocketTimeoutException c1-5
+1000400 50 HTTP c1-4
+1000500 60000 HTTP c1-5
 1005000 5000 DONE c1-1
 T
 # mensagens com espaço: mk_jtl usa só $3, então reescreve as linhas HTTP com a mensagem inteira
@@ -21,6 +21,7 @@ awk -F'\t' 'BEGIN { OFS = "\t" } $6 == "c1-4" && $3 == "turno-resultado" { $5 = 
 	"$TMP/a.jtl" >"$TMP/a2.jtl"
 assert_eq "t0" 1000000 "$(jtl_t0 "$TMP/a2.jtl")"
 assert_eq "turnos na janela [from,to)" "2" "$(jtl_turns "$TMP/a2.jtl" 1000200 1000400 | wc -l | tr -d ' ')"
+assert_eq "fixture: mensagem HTTP completa" 1 "$(grep -c $'\tHTTP Non HTTP response code: java.net.SocketTimeoutException\t' "$TMP/a2.jtl")"
 assert_eq "erros por tipo" "$(printf 'FAILED 1\nTIMEOUT 1\nHTTP 2')" "$(jtl_errors "$TMP/a2.jtl" 0 2000000)"
 assert_eq "erros respeitam a janela" "$(printf 'FAILED 0\nTIMEOUT 1\nHTTP 2')" "$(jtl_errors "$TMP/a2.jtl" 1000300 2000000)"
 
